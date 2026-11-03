@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>R07 · Площадь комнаты (AR)</title>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1f6feb">
+<style>
+body{font:16px system-ui,sans-serif;margin:0;padding:12px;background:#f6f7f9;color:#111}
+h1{font-size:19px;margin:0 0 4px}.card{background:#fff;border-radius:10px;padding:12px;margin:10px 0;box-shadow:0 1px 3px #0002}
+button{font:inherit;padding:12px 14px;border:0;border-radius:8px;background:#1f6feb;color:#fff;margin:4px 4px 4px 0}
+button.sec{background:#59636e}button:disabled{opacity:.4}
+input{font:inherit;width:5.5em;padding:6px;margin:2px}textarea{width:100%;font:inherit}
+pre{white-space:pre-wrap;margin:6px 0}.warn{color:#b35900}.note{font-size:13px;color:#555}
+#arOverlay{display:none;position:fixed;inset:0;color:#fff;font-size:15px}
+#arOverlay .bar{position:absolute;left:0;right:0;bottom:0;background:#000a;padding:10px}
+#arOverlay .cross{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px;border:2px solid #0f0;border-radius:50%}
+#arOverlay pre{margin:0 0 8px}
+</style></head><body>
+<h1>R07 · Площадь комнаты по углам <span class="note" id="ver"></span></h1>
+<div class="note">ЭКСПЕРИМЕНТ. Точность на 3–5 м не проверена. Результат ориентировочный, не для документов.</div>
+
+<div class="card">
+<b>1. Измерить</b>
+<pre id="intro">Встаньте в комнате. Откройте AR, наведите прицел на угол пола (стык пола и стены) и нажмите «Угол». Углы отмечайте по кругу, по порядку (1→2→3→4). Не уходите далеко от начала: AR дрейфует при ходьбе.</pre>
+<button id="arStart">Открыть AR</button>
+</div>
+
+<div class="card">
+<b>2. Результат</b>
+<pre id="result">Углов нет.</pre>
+</div>
+
+<div class="card">
+<b>3. Сверка рулеткой</b> (стороны в метрах, в том порядке, как отмечали углы: 1→2, 2→3, 3→4, 4→1)<br>
+<input id="t0" inputmode="decimal" placeholder="1→2"><input id="t1" inputmode="decimal" placeholder="2→3"><input id="t2" inputmode="decimal" placeholder="3→4"><input id="t3" inputmode="decimal" placeholder="4→1"><br>
+Диагональ 1↔3: <input id="td" inputmode="decimal" placeholder="необяз."><br>
+Заметка (комната, мебель, свет): <textarea id="note" rows="2"></textarea>
+<button id="save" disabled>Записать</button><button class="sec" id="share" disabled>Отправить JSON</button>
+<pre id="cmp"></pre>
+<div class="note" id="count"></div>
+</div>
+
+<div id="arOverlay">
+  <div class="cross"></div>
+  <div class="bar"><pre id="arStatus"></pre>
+    <button id="arAdd">Угол</button><button class="sec" id="arUndo">Назад</button><button class="sec" id="arClear">Сброс</button><button id="arDone">Готово</button>
+  </div>
+</div>
+
+<script src="room-math.js"></script>
+<script>
+"use strict";
+const PAGE_VERSION = "R07-0.1";
+const $ = (id) => document.getElementById(id);
+$("ver").textContent = PAGE_VERSION;
+const LS = "hmR07Trials";
+const loadAll = () => { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch (e) { return []; } };
+const saveAll = (a) => { try { localStorage.setItem(LS, JSON.stringify(a)); } catch (e) { alert("Не удалось сохранить: " + e.message); } };
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+const median = (a) => { const s = a.slice().sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const medPoint = (S) => [0, 1, 2].map((k) => median(S.map((s) => s[k])));
+const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const ar = { session: null, pts: [], spread: [], dists: [], capture: null, lastHit: null, lastCam: null };
+let current = null; // analysis of the last session
+
+function arText() {
+  let t = "Углов: " + ar.pts.length + (ar.pts.length >= 3 ? " (можно «Готово»)" : "") + "\nЛуч на пол: " + (ar.lastHit ? "есть" : "НЕТ, поводите телефоном");
+  if (ar.capture) t += "\nСнимаю угол " + (ar.pts.length + 1) + ": " + ar.capture.samples.length + "/20, не двигайтесь";
+  if (ar.pts.length >= 3) { const r = R07MATH.analyze(ar.pts); t += "\nПлощадь сейчас: " + r.areaM2.toFixed(2) + " м²"; }
+  $("arStatus").textContent = t;
+}
+$("arAdd").onclick = () => { if (!ar.capture && ar.pts.length < 8) { ar.capture = { samples: [], cams: [] }; arText(); } };
+$("arUndo").onclick = () => { ar.pts.pop(); ar.spread.pop(); ar.dists.pop(); arText(); };
+$("arClear").onclick = () => { ar.pts = []; ar.spread = []; ar.dists = []; ar.capture = null; arText(); };
+$("arDone").onclick = () => { if (ar.session) ar.session.end().catch(() => {}); else onArEnd(); };
+$("arOverlay").addEventListener("beforexrselect", (e) => e.preventDefault());
+
+function onArFrame(_t, frame) {
+  const s = frame.session; s.requestAnimationFrame(onArFrame);
+  const gl = ar.gl, layer = s.renderState.baseLayer;
+  if (gl && layer) { gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+  const res = frame.getHitTestResults(ar.hitSource);
+  ar.lastHit = null; ar.lastCam = null;
+  if (res.length) { const pose = res[0].getPose(ar.refSpace); if (pose) { const p = pose.transform.position; ar.lastHit = [p.x, p.y, p.z]; } }
+  const vp = frame.getViewerPose(ar.refSpace);
+  if (vp) { const c = vp.transform.position; ar.lastCam = [c.x, c.y, c.z]; }
+  if (ar.capture && ar.lastHit) {
+    ar.capture.samples.push(ar.lastHit); if (ar.lastCam) ar.capture.cams.push(ar.lastCam);
+    if (ar.capture.samples.length >= 20) {
+      const sm = ar.capture.samples, m = medPoint(sm);
+      ar.pts.push(m); ar.spread.push(Math.max(...sm.map((q) => d3(q, m))) * 1000);
+      ar.dists.push(ar.capture.cams.length ? d3(m, medPoint(ar.capture.cams)) * 1000 : 0);
+      ar.capture = null;
+    }
+  }
+  arText();
+}
+$("arStart").onclick = async () => {
+  if (!navigator.xr) { $("result").textContent = "AR недоступен: нет navigator.xr (нужен Chrome на Android и https)."; return; }
+  const ov = $("arOverlay"); ov.style.display = "block";
+  try {
+    const session = await navigator.xr.requestSession("immersive-ar", { requiredFeatures: ["hit-test"], optionalFeatures: ["dom-overlay"], domOverlay: { root: ov } });
+    ar.session = session; ar.pts = []; ar.spread = []; ar.dists = []; ar.capture = null;
+    const c = document.createElement("canvas"); ar.gl = c.getContext("webgl", { xrCompatible: true });
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, ar.gl) });
+    ar.refSpace = await session.requestReferenceSpace("local");
+    ar.hitSource = await session.requestHitTestSource({ space: await session.requestReferenceSpace("viewer") });
+    session.addEventListener("end", onArEnd); session.requestAnimationFrame(onArFrame);
+  } catch (e) { ov.style.display = "none"; ar.session = null; $("result").textContent = "AR не запустился: " + (e && e.message || e); }
+};
+function onArEnd() {
+  $("arOverlay").style.display = "none"; ar.session = null; ar.gl = null; ar.hitSource = null;
+  if (ar.pts.length < 3) { current = null; refresh(); $("result").textContent = "Нужно минимум 3 угла. Отмечено: " + ar.pts.length; return; }
+  current = R07MATH.analyze(ar.pts); refresh();
+}
+function tapeInput() {
+  const sides = [0, 1, 2, 3].map((i) => parseFloat(($("t" + i).value || "").replace(",", ".")));
+  const diag0 = parseFloat(($("td").value || "").replace(",", "."));
+  return { sides, diag0: diag0 > 0 ? diag0 : 0 };
+}
+function refresh() {
+  const r = current; let t = "";
+  if (!r) { $("result").textContent = "Углов нет."; $("save").disabled = $("share").disabled = true; $("cmp").textContent = ""; showCount(); return; }
+  t += "ПЛОЩАДЬ (AR): " + r.areaM2.toFixed(2) + " м²  (ориентировочно)\nСтороны, м: " + r.sidesM.map((v) => v.toFixed(2)).join(" · ");
+  if (r.diagsM) t += "\nДиагонали, м: " + r.diagsM.map((v) => v.toFixed(2)).join(" · ") + " (разница " + r.diagDiffPct.toFixed(1) + "%)";
+  t += "\nУглы, °: " + r.anglesDeg.map((v) => v.toFixed(0)).join(" · ") + "\nРазброс по высоте пола: " + (r.floorSpreadM * 100).toFixed(1) + " см";
+  t += "\nРазброс снятия точек, мм: " + ar.spread.map((v) => v.toFixed(0)).join(" · ") + "\nДо камеры, м: " + ar.dists.map((v) => (v / 1000).toFixed(1)).join(" · ");
+  if (r.warnings.length) t += "\n\nВНИМАНИЕ:\n" + r.warnings.join("\n");
+  $("result").textContent = t;
+  const cmp = r.n === 4 ? R07MATH.compare(r, tapeInput()) : null;
+  $("cmp").textContent = cmp ? "Рулетка: " + cmp.tapeAreaM2.toFixed(2) + " м² (" + cmp.tapeBasis + ")\nОшибка площади AR: " + (cmp.areaErrPct >= 0 ? "+" : "") + cmp.areaErrPct.toFixed(1) + "%\nОшибки сторон, %: " + cmp.sideErrPct.map((v) => v.toFixed(1)).join(" · ") : (r.n === 4 ? "Введите стороны рулеткой для сверки." : "Сверка работает для 4 углов.");
+  $("save").disabled = false; showCount();
+}
+["t0", "t1", "t2", "t3", "td"].forEach((id) => $(id).addEventListener("input", refresh));
+function showCount() { $("count").textContent = "Записано опытов: " + loadAll().length; $("share").disabled = loadAll().length === 0; }
+$("save").onclick = () => {
+  if (!current) return;
+  const cmp = current.n === 4 ? R07MATH.compare(current, tapeInput()) : null;
+  const all = loadAll();
+  all.push({ id: all.length + 1, page: PAGE_VERSION, at: new Date().toISOString(), method: "AR_ROOM_CORNERS", pointsM: ar.pts, spreadMm: ar.spread, cameraDistMm: ar.dists, analysis: current, tape: tapeInput(), compare: cmp, note: $("note").value });
+  saveAll(all); $("save").disabled = true; showCount();
+};
+$("share").onclick = async () => {
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), page: PAGE_VERSION, trials: loadAll() }, null, 1)], { type: "application/json" });
+  const file = new File([blob], "r07-rooms.json", { type: "application/json" });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "R07" }); return; } } catch (e) { if (e.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "r07-rooms.json"; a.click();
+};
+showCount();
+</script></body></html>
