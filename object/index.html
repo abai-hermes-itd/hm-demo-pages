@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Прототип: окно «Объект»</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f5c3e">
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; max-width: 560px; margin-inline: auto; color: #1a1a1a; background: #fff; }
+  h1 { font-size: 1.15rem; margin: 4px 0 8px; }
+  h2 { font-size: 1rem; margin: 18px 0 6px; }
+  .proto { background: #fff4d6; border: 1px solid #e0b84a; border-radius: 8px; padding: 8px 10px; font-size: .85rem; }
+  label { display: block; margin: 10px 0 3px; font-size: .9rem; }
+  input[type=text], input[type=number] { width: 100%; box-sizing: border-box; font-size: 1rem; padding: 10px; border: 1px solid #999; border-radius: 8px; }
+  .hint { font-size: .8rem; color: #555; margin-top: 3px; }
+  button, a.btn { display: inline-block; font-size: 1rem; padding: 11px 14px; margin: 6px 6px 0 0; border: 0; border-radius: 8px; background: #1f5c3e; color: #fff; text-decoration: none; }
+  button.secondary, a.btn.secondary { background: #e6ece8; color: #1f3d2d; }
+  button:disabled, a.btn[aria-disabled=true] { opacity: .45; pointer-events: none; }
+  .box { background: #f3f5f4; border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: .9rem; white-space: pre-wrap; }
+  .warn { color: #8a4b00; }
+  .row { display: flex; gap: 8px; } .row > div { flex: 1; }
+  .consent { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: .9rem; }
+  .consent input { margin-top: 4px; width: 20px; height: 20px; }
+</style>
+</head>
+<body>
+<h1>Объект</h1>
+<div class="proto">ПРОТОТИП окна «Объект» для демонстрации (кадастровый номер, GPS, 2ГИС). Не часть приложения: данные хранятся только на этом телефоне. Версия <span id="ver"></span>.</div>
+
+<label for="name">Название</label>
+<input id="name" type="text" autocomplete="off" placeholder="например: Жилой дом, подъезд 2">
+<label for="address">Адрес</label>
+<input id="address" type="text" autocomplete="off" placeholder="город, улица, дом">
+
+<label for="cad">Кадастровый номер здания (по желанию)</label>
+<input id="cad" type="text" autocomplete="off" inputmode="text" placeholder="можно оставить пустым">
+<div class="hint">Вводится вручную. Формат пока не проверяется (только пробелы по краям и длина до 40 знаков).</div>
+
+<h2>Положение здания</h2>
+<div class="consent"><input id="consent" type="checkbox"><label for="consent" style="margin:0">Разрешаю определить координаты этого устройства и сохранить их как положение здания. Данные остаются на телефоне.</label></div>
+<button id="gps" disabled>Определить по GPS</button>
+<button id="clearGeo" class="secondary">Сбросить координаты</button>
+<div class="hint">Лучше выйти на улицу: внутри здания точность GPS низкая.</div>
+<details style="margin-top:8px"><summary>Ввести координаты вручную</summary>
+  <div class="row"><div><label for="latIn">Широта</label><input id="latIn" type="number" step="any" placeholder="50.4111"></div>
+  <div><label for="lngIn">Долгота</label><input id="lngIn" type="number" step="any" placeholder="80.2275"></div></div>
+  <button id="manual" class="secondary">Применить вручную</button>
+</details>
+<div id="geo" class="box">Координаты не заданы.</div>
+
+<h2>Открыть место</h2>
+<a id="open2gis" class="btn" aria-disabled="true" target="_blank" rel="noopener">Открыть в 2ГИС (сайт)</a>
+<a id="openGeo" class="btn secondary" aria-disabled="true">Открыть в картах телефона</a>
+<div class="hint">Ссылка на 2ГИС строится по координатам, ключ и сервер не нужны. Формат ссылки нужно проверить на телефоне.</div>
+
+<h2>Сохранение</h2>
+<button id="save">Сохранить</button>
+<button id="share" class="secondary">Поделиться (файл)</button>
+<button id="reset" class="secondary">Очистить поля</button>
+<div id="status" class="box">—</div>
+<div id="offline" class="box">Офлайн-режим: проверяется…</div>
+
+<script>
+const VERSION = "OBJ-0.1";
+const KEY = "hmDemoObject";
+const $ = (id) => document.getElementById(id);
+$("ver").textContent = VERSION;
+const geo = { lat: null, lng: null, accuracyM: null, capturedAt: null, source: null };
+
+function setStatus(m) { $("status").textContent = m; }
+function cadClean(v) { return String(v || "").trim(); }
+function validCad(v) { return v.length <= 40; }
+function inKazakhstan(lat, lng) { return lat >= 40 && lat <= 56 && lng >= 46 && lng <= 88; }
+
+function render() {
+  const has = geo.lat !== null;
+  if (!has) { $("geo").textContent = "Координаты не заданы."; $("geo").classList.remove("warn"); }
+  else {
+    let t = "Широта: " + geo.lat.toFixed(6) + "\nДолгота: " + geo.lng.toFixed(6)
+      + "\nТочность: " + (geo.accuracyM === null ? "не указана (ручной ввод)" : "±" + Math.round(geo.accuracyM) + " м")
+      + "\nВремя: " + geo.capturedAt + "\nИсточник: " + geo.source;
+    const w = [];
+    if (geo.accuracyM !== null && geo.accuracyM > 50) w.push("Точность хуже 50 м: выйдите на открытое место и определите заново.");
+    if (!inKazakhstan(geo.lat, geo.lng)) w.push("Точка вне Казахстана: проверьте широту и долготу.");
+    if (w.length) t += "\n" + w.join("\n");
+    $("geo").textContent = t; $("geo").classList.toggle("warn", w.length > 0);
+  }
+  const a = $("open2gis"), g = $("openGeo");
+  if (has) {
+    a.href = "https://2gis.kz/?m=" + geo.lng.toFixed(6) + "," + geo.lat.toFixed(6) + "/17";
+    g.href = "geo:" + geo.lat.toFixed(6) + "," + geo.lng.toFixed(6) + "?q=" + geo.lat.toFixed(6) + "," + geo.lng.toFixed(6) + "(" + encodeURIComponent($("name").value.trim() || "Объект") + ")";
+    a.removeAttribute("aria-disabled"); g.removeAttribute("aria-disabled");
+  } else {
+    a.removeAttribute("href"); g.removeAttribute("href");
+    a.setAttribute("aria-disabled", "true"); g.setAttribute("aria-disabled", "true");
+  }
+}
+
+$("consent").onchange = () => { $("gps").disabled = !$("consent").checked; };
+$("gps").onclick = () => {
+  if (!$("consent").checked) { setStatus("Сначала отметьте согласие на определение координат."); return; }
+  if (!navigator.geolocation) { setStatus("Браузер не поддерживает определение координат."); return; }
+  setStatus("Определяю положение…");
+  navigator.geolocation.getCurrentPosition((p) => {
+    geo.lat = p.coords.latitude; geo.lng = p.coords.longitude; geo.accuracyM = p.coords.accuracy;
+    geo.capturedAt = new Date().toISOString(); geo.source = "GPS";
+    setStatus("Координаты определены. Не забудьте нажать «Сохранить»."); render();
+  }, (e) => {
+    const m = { 1: "доступ запрещён (разрешите геолокацию в настройках браузера)", 2: "положение недоступно", 3: "время ожидания вышло" }[e.code] || String(e.message || e);
+    setStatus("Не удалось определить координаты: " + m + ". Можно ввести их вручную.");
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+};
+$("manual").onclick = () => {
+  const lat = Number($("latIn").value), lng = Number($("lngIn").value);
+  if ($("latIn").value === "" || $("lngIn").value === "" || !(lat >= -90 && lat <= 90) || !(lng >= -180 && lng <= 180)) { setStatus("Введите широту от −90 до 90 и долготу от −180 до 180."); return; }
+  geo.lat = lat; geo.lng = lng; geo.accuracyM = null; geo.capturedAt = new Date().toISOString(); geo.source = "MANUAL";
+  setStatus("Координаты введены вручную. Не забудьте нажать «Сохранить»."); render();
+};
+$("clearGeo").onclick = () => { Object.assign(geo, { lat: null, lng: null, accuracyM: null, capturedAt: null, source: null }); setStatus("Координаты сброшены (сохраните, чтобы изменение осталось)."); render(); };
+
+function payload() {
+  return { version: VERSION, savedAt: new Date().toISOString(), name: $("name").value.trim(), address: $("address").value.trim(),
+    cadastralNumber: cadClean($("cad").value) || null,
+    geoLat: geo.lat, geoLng: geo.lng, geoAccuracyM: geo.accuracyM, geoCapturedAt: geo.capturedAt, geoSource: geo.source };
+}
+$("save").onclick = () => {
+  const cad = cadClean($("cad").value);
+  if (!validCad(cad)) { setStatus("НЕ СОХРАНЕНО: кадастровый номер длиннее 40 знаков."); return; }
+  try { localStorage.setItem(KEY, JSON.stringify(payload())); setStatus("Сохранено на этом телефоне: " + new Date().toLocaleTimeString()); }
+  catch (e) { setStatus("НЕ СОХРАНЕНО: память браузера недоступна."); }
+};
+$("share").onclick = async () => {
+  try {
+    const f = new File([JSON.stringify(payload(), null, 1)], "object-" + Date.now() + ".json", { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: "Объект" }); setStatus("Передано."); return; }
+    const url = URL.createObjectURL(f); const a = document.createElement("a"); a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus("Файл сохранён в «Загрузки».");
+  } catch (e) { setStatus(e && e.name === "AbortError" ? "Отправка отменена." : "Не удалось поделиться: " + (e && e.message ? e.message : e)); }
+};
+$("reset").onclick = () => {
+  if (!confirm("Очистить поля формы? Сохранённые данные на телефоне останутся, пока вы не сохраните пустую форму.")) return;
+  ["name", "address", "cad", "latIn", "lngIn"].forEach((i) => { $(i).value = ""; });
+  Object.assign(geo, { lat: null, lng: null, accuracyM: null, capturedAt: null, source: null }); setStatus("Поля очищены."); render();
+};
+["name"].forEach((i) => { $(i).addEventListener("input", render); });
+
+try {
+  const raw = localStorage.getItem(KEY);
+  if (raw) { const d = JSON.parse(raw);
+    $("name").value = d.name || ""; $("address").value = d.address || ""; $("cad").value = d.cadastralNumber || "";
+    if (typeof d.geoLat === "number" && typeof d.geoLng === "number") Object.assign(geo, { lat: d.geoLat, lng: d.geoLng, accuracyM: d.geoAccuracyM ?? null, capturedAt: d.geoCapturedAt, source: d.geoSource });
+    setStatus("Загружено сохранённое от " + d.savedAt);
+  }
+} catch (_) { /* storage unavailable */ }
+render();
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).then(() => { $("offline").textContent = "Офлайн-режим готов: страница открывается без интернета."; })
+    .catch((e) => { $("offline").textContent = "Офлайн-режим НЕ включён (" + (e && e.message ? e.message : e) + ")."; });
+} else { $("offline").textContent = "Офлайн-режим недоступен в этом браузере."; }
+</script>
+</body>
+</html>

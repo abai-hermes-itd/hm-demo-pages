@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAM-MEAS-R04 точность замеров</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f5c3e">
+<style>
+  body { margin: 0; padding: 16px; font: 16px/1.5 system-ui, sans-serif; background: #f5f2ec; color: #1a1a1a; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 20px 0 6px; }
+  p { margin: 4px 0 10px; color: #555; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  select, input[type=number], input[type=text] { width: 100%; box-sizing: border-box; min-height: 44px; font: inherit; padding: 6px 8px; border: 1px solid #b9b1a6; border-radius: 8px; background: #fff; }
+  button, .filebtn { display: block; width: 100%; box-sizing: border-box; min-height: 48px; margin: 8px 0; font: inherit; font-weight: 600; border-radius: 8px; border: 1px solid #1a6b4a; background: #1a6b4a; color: #fff; text-align: center; line-height: 46px; }
+  button.secondary { background: #fff; color: #1a6b4a; }
+  button:disabled { opacity: .45; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .box { background: #fff; border: 1px solid #d8d0c8; border-radius: 8px; padding: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  #hint { font-weight: 600; color: #1a6b4a; margin: 8px 0; min-height: 24px; }
+  #wrap { width: 100%; }
+  canvas#view { width: 100%; display: block; border: 1px solid #b9b1a6; border-radius: 8px; touch-action: manipulation; background: #ddd; }
+  .warn { color: #a33; font-weight: 600; }
+  input[type=file] { display: none; }
+  #arOverlay { display: none; position: fixed; inset: 0; background: transparent; color: #fff; font-size: 16px; }
+  #arOverlay .cross { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #000; }
+  #arOverlay .cross::after { content: ""; position: absolute; left: 16px; top: 16px; width: 4px; height: 4px; background: #f33; border-radius: 50%; }
+  #arOverlay .top { position: absolute; left: 0; right: 0; top: 0; padding: 12px; background: rgba(0,0,0,.55); white-space: pre-wrap; }
+  #arOverlay .bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px 16px; background: rgba(0,0,0,.45); }
+  #arOverlay button { background: #fff; color: #1a6b4a; border-color: #fff; }
+</style>
+</head>
+<body>
+<h1>CAM-MEAS-R04: точность замеров (сегрегированная съёмка)</h1>
+<p>Исследовательская страница. Не часть приложения. Правило серии: один эталон на один снимок. Каждая проба сохраняется вместе со снимком.</p>
+<div id="offlineStatus" class="box">Офлайн-режим: проверяется…</div>
+
+<h2>Условия попытки</h2>
+<label for="place">Место (обязательно)</label>
+<input id="place" type="text" list="placeList" placeholder="например: подъезд 1, 2 этаж" autocomplete="off">
+<datalist id="placeList"></datalist>
+<label for="series">Серия</label>
+<select id="series">
+  <option value="A">A: дверь, ширина, карта</option>
+  <option value="B">B: дверь, ширина, лист А4</option>
+  <option value="C">C: дверь, высота, лист А4</option>
+  <option value="D">D: плитка или створка окна, лист А4</option>
+  <option value="E">E: AR без эталона</option>
+  <option value="X">Другая</option>
+</select>
+<label for="targetKind">Что измеряется</label>
+<select id="targetKind">
+  <option value="door_width">Ширина двери</option>
+  <option value="door_height">Высота двери</option>
+  <option value="tile">Плитка</option>
+  <option value="window_sash">Створка окна</option>
+  <option value="opening_or_ceiling">Проём или высота потолка</option>
+  <option value="other">Другое</option>
+</select>
+<label for="refPos">Положение эталона на измеряемой длине (для фото-масштаба обязательно)</label>
+<select id="refPos">
+  <option value="">— выберите —</option>
+  <option value="middle">Посередине</option>
+  <option value="left_end">У левого конца</option>
+  <option value="right_end">У правого конца</option>
+  <option value="other">Другое или не в плоскости</option>
+</select>
+<label for="orient">Положение телефона</label>
+<select id="orient">
+  <option value="landscape">Горизонтально</option>
+  <option value="portrait">Вертикально</option>
+</select>
+<label for="tiltDeg">Наклон телефона, градусы (необязательно)</label>
+<input id="tiltDeg" type="number" inputmode="decimal" placeholder="например 3">
+<label for="distCm">Расстояние от телефона до объекта, В САНТИМЕТРАХ (300 = 3 м)</label>
+<input id="distCm" type="number" inputmode="decimal" placeholder="например 150">
+<label for="cond">Условия</label>
+<select id="cond">
+  <option value="frontal">Строго в лоб, хороший свет</option>
+  <option value="tilt10">Наклон около 10°</option>
+  <option value="lowlight">Плохой свет</option>
+  <option value="other">Другое</option>
+</select>
+
+<h2>Способ</h2>
+<div class="row">
+  <button id="modePhoto">A. Фото-масштаб</button>
+  <button id="modeAr" class="secondary">B. AR-расстояние</button>
+</div>
+
+<section id="panelPhoto">
+  <label for="refSel">Эталон в кадре</label>
+  <select id="refSel"></select>
+  <label for="refMm">Длина эталона, мм (можно поправить)</label>
+  <input id="refMm" type="number" inputmode="decimal" step="0.01">
+  <div id="refNote" class="warn"></div>
+  <label class="filebtn" for="photoFile" id="photoLabel">Сделать фото</label>
+  <input id="photoFile" type="file" accept="image/*" capture="environment">
+  <div id="hint">Сначала сделайте фото.</div>
+  <div id="wrap"><canvas id="view" width="10" height="10"></canvas></div>
+  <div class="row">
+    <button id="acceptPt" disabled>Принять точку</button>
+    <button id="undoPt" class="secondary" disabled>Отмена</button>
+  </div>
+</section>
+
+<section id="panelAr" hidden>
+  <p>Поставьте две точки на поверхности. Держите телефон неподвижно, пока идёт снятие точки. После «Готово» вернётесь сюда и введёте длину по рулетке.</p>
+  <button id="arStart">Запустить AR</button>
+  <div id="arFailBox" hidden>
+    <label for="arFailReason">AR не сработал: причина</label>
+    <select id="arFailReason">
+      <option value="no_start">Не запустился</option>
+      <option value="no_ray">Нет луча на поверхность</option>
+      <option value="unstable">Точки нестабильны</option>
+      <option value="other">Другое</option>
+    </select>
+    <button id="recordArFail" class="secondary">Записать: AR не сработал</button>
+  </div>
+</section>
+
+<h2>Результат попытки</h2>
+<div id="result" class="box">Пока нет.</div>
+<label for="tapeMm">Длина объекта по рулетке, мм</label>
+<input id="tapeMm" type="number" inputmode="decimal" step="0.1">
+<button id="record" disabled>Записать попытку</button>
+<div id="sendStatus" class="box">—</div>
+
+<h2>Итоги по записанным попыткам</h2>
+<div id="summary" class="box">Пока нет попыток.</div>
+<button id="resend" class="secondary">Отправить неотправленные</button>
+<button id="exportShare" class="secondary">Поделиться пробами и снимками</button>
+<button id="exportJson" class="secondary">Скачать пробы (JSON)</button>
+
+<div id="arOverlay">
+  <div class="cross"></div>
+  <div class="top" id="arStatus">Запуск…</div>
+  <div class="bar">
+    <div class="row"><button id="arA">Точка А</button><button id="arB">Точка Б</button></div>
+    <div class="row"><button id="arReset">Сброс</button><button id="arDone">Готово</button></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const errText = (e) => (e && (e.name ? e.name + ": " : "") + (e.message ?? String(e))) || "unknown";
+const REFS = [
+  { id: "CARD_ID1_LONG",    label: "Банковская карта, длинная сторона (85,60)",  mm: 85.6,  tape: false },
+  { id: "CARD_ID1_SHORT",   label: "Банковская карта, короткая сторона (53,98)", mm: 53.98, tape: false },
+  { id: "PAPER_A4_LONG",    label: "Лист А4, длинная сторона (297)",             mm: 297,   tape: false },
+  { id: "PAPER_A4_SHORT",   label: "Лист А4, короткая сторона (210)",            mm: 210,   tape: false },
+  { id: "TILE_600",         label: "Плитка 600×600",                             mm: 600,   tape: true },
+  { id: "BRICK_10_COURSES", label: "Кирпич: 10 рядов кладки",                    mm: 750,   tape: true },
+  { id: "CUSTOM",           label: "Другой эталон",                              mm: 100,   tape: true },
+];
+const STEPS = ["1-й край ЭТАЛОНА", "2-й край ЭТАЛОНА", "1-й край ОБЪЕКТА", "2-й край ОБЪЕКТА"];
+const STORE_KEY = "camMeasR04Trials";
+const PLACES_KEY = "camMeasR04Places";
+const PAGE_VERSION = "R04-0.4";
+const sessionId = "s" + Date.now().toString(36);
+const state = { trials: [], pending: null, mode: "photo", photos: {}, arFail: null, places: [] };
+
+/* ---------- R04-0.3: offline photo store (IndexedDB) + service worker ---------- */
+const IDB_NAME = "camMeasR04", IDB_STORE = "photos";
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    try {
+      const rq = indexedDB.open(IDB_NAME, 1);
+      rq.onupgradeneeded = () => { rq.result.createObjectStore(IDB_STORE, { keyPath: "id" }); };
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    } catch (e) { reject(e); }
+  });
+}
+async function idbPut(id, blob) {
+  try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(IDB_STORE, "readwrite"); tx.objectStore(IDB_STORE).put({ id, blob }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); return true; } catch (_) { return false; }
+}
+async function idbDel(id) {
+  try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(IDB_STORE, "readwrite"); tx.objectStore(IDB_STORE).delete(id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (_) { /* ignore */ }
+}
+async function idbAll() {
+  try { const db = await idbOpen(); return await new Promise((res, rej) => { const rq = db.transaction(IDB_STORE).objectStore(IDB_STORE).getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); }); } catch (_) { return []; }
+}
+function setOffline(msg) { const el = document.getElementById("offlineStatus"); if (el) el.textContent = msg; }
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then(() => navigator.serviceWorker.ready).then(() => {
+    setOffline("Офлайн-режим готов: страница открывается без интернета и без компьютера по адресу " + location.origin + location.pathname + ". Пробы и снимки хранятся на телефоне до отправки.");
+  }).catch((e) => setOffline("Офлайн-режим НЕ включён (" + (e && e.message ? e.message : e) + "). Страница работает только при запущенном сервере."));
+} else {
+  setOffline("Офлайн-режим недоступен в этом браузере. Страница работает только при запущенном сервере.");
+}
+
+try { const raw = localStorage.getItem(STORE_KEY); if (raw) state.trials = JSON.parse(raw); } catch (_) { /* storage may be unavailable */ }
+try { const rawP = localStorage.getItem(PLACES_KEY); if (rawP) state.places = JSON.parse(rawP); } catch (_) { /* ignore */ }
+function savePlaces() { try { localStorage.setItem(PLACES_KEY, JSON.stringify(state.places)); } catch (_) { /* ignore */ } }
+function renderPlaces() {
+  const dl = $("placeList"); dl.textContent = "";
+  state.places.forEach((n) => { const o = document.createElement("option"); o.value = n; dl.appendChild(o); });
+}
+function rememberPlace(name) {
+  const n = name.trim();
+  if (!n) return;
+  state.places = [n].concat(state.places.filter((x) => x !== n)).slice(0, 50);
+  savePlaces(); renderPlaces();
+}
+renderPlaces();
+function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state.trials)); } catch (_) { /* ignore */ } }
+
+/* ---------- reference select ---------- */
+const refSel = $("refSel");
+REFS.forEach((r) => { const o = document.createElement("option"); o.value = r.id; o.textContent = r.label; refSel.appendChild(o); });
+function currentRef() { return REFS.find((r) => r.id === refSel.value) || REFS[0]; }
+function onRefChange() {
+  const r = currentRef();
+  $("refMm").value = String(r.mm);
+  $("refNote").textContent = r.tape ? "Этот эталон не стандартный: замерьте его рулеткой на этой поверхности и впишите длину выше." : "";
+}
+refSel.onchange = onRefChange;
+onRefChange();
+
+/* ---------- mode switch ---------- */
+function setMode(m) {
+  state.mode = m;
+  $("panelPhoto").hidden = m !== "photo";
+  $("panelAr").hidden = m !== "ar";
+  $("modePhoto").className = m === "photo" ? "" : "secondary";
+  $("modeAr").className = m === "ar" ? "" : "secondary";
+}
+$("modePhoto").onclick = () => setMode("photo");
+$("modeAr").onclick = () => setMode("ar");
+
+/* ---------- photo mode ---------- */
+const canvas = $("view");
+const ctx = canvas.getContext("2d");
+const ph = { img: null, W: 0, H: 0, pts: [], stage: "full", cand: null, view: null };
+
+function fullView() { return { x: 0, y: 0, w: ph.W, h: ph.H }; }
+function zoomView(c) {
+  const w = Math.min(ph.W, 360);
+  const h = w * ph.H / ph.W;
+  const x = Math.min(Math.max(c.x - w / 2, 0), ph.W - w);
+  const y = Math.min(Math.max(c.y - h / 2, 0), ph.H - h);
+  return { x, y, w, h };
+}
+function draw() {
+  if (!ph.img) return;
+  const cssW = $("wrap").clientWidth;
+  const cssH = cssW * ph.H / ph.W;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.height = cssH + "px";
+  const v = ph.view;
+  canvas.dataset.view = JSON.stringify(v);
+  ctx.drawImage(ph.img, v.x, v.y, v.w, v.h, 0, 0, canvas.width, canvas.height);
+  const toC = (p) => ({ x: (p.x - v.x) / v.w * canvas.width, y: (p.y - v.y) / v.h * canvas.height });
+  const mark = (p, color) => {
+    const c = toC(p);
+    if (c.x < -20 || c.y < -20 || c.x > canvas.width + 20 || c.y > canvas.height + 20) return;
+    const r = 10 * dpr;
+    ctx.lineWidth = 2 * dpr; ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c.x - r * 1.6, c.y); ctx.lineTo(c.x + r * 1.6, c.y); ctx.moveTo(c.x, c.y - r * 1.6); ctx.lineTo(c.x, c.y + r * 1.6); ctx.stroke();
+  };
+  const line = (a, b, color) => {
+    const ca = toC(a), cb = toC(b);
+    ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.moveTo(ca.x, ca.y); ctx.lineTo(cb.x, cb.y); ctx.stroke();
+  };
+  ph.pts.forEach((p, i) => mark(p, i < 2 ? "#18c46a" : "#ff9a1f"));
+  if (ph.pts.length >= 2) line(ph.pts[0], ph.pts[1], "#18c46a");
+  if (ph.pts.length >= 4) line(ph.pts[2], ph.pts[3], "#ff9a1f");
+  if (ph.cand) mark(ph.cand, "#ff2d55");
+}
+function updateHint() {
+  const n = ph.pts.length;
+  let text;
+  if (!ph.img) text = "Сначала сделайте фото.";
+  else if (n >= 4) text = "Готово: четыре точки поставлены.";
+  else if (ph.stage === "zoom") text = "Точка " + (n + 1) + "/4, " + STEPS[n] + ": уточните касанием и нажмите «Принять точку».";
+  else text = "Точка " + (n + 1) + "/4: коснитесь, где " + STEPS[n] + ".";
+  $("hint").textContent = text;
+  $("acceptPt").disabled = !(ph.stage === "zoom" && ph.cand);
+  $("undoPt").disabled = !(ph.img && (ph.stage === "zoom" || ph.pts.length > 0));
+}
+function resetPhotoPoints() {
+  ph.pts = []; ph.stage = "full"; ph.cand = null; ph.view = ph.img ? fullView() : null;
+  state.pending = null; $("record").disabled = true;
+}
+$("photoFile").onchange = async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  try {
+    if (ph.img && ph.img.close) ph.img.close();
+    ph.img = await createImageBitmap(file);
+    ph.file = file;
+    ph.W = ph.img.width; ph.H = ph.img.height;
+    resetPhotoPoints();
+    $("result").textContent = "Фото " + ph.W + "×" + ph.H + " px загружено.";
+    draw(); updateHint();
+  } catch (e) {
+    ph.img = null;
+    $("result").textContent = "Не удалось открыть фото: " + errText(e);
+    updateHint();
+  }
+  ev.target.value = "";
+};
+canvas.addEventListener("click", (ev) => {
+  if (!ph.img || ph.pts.length >= 4) return;
+  const rect = canvas.getBoundingClientRect();
+  const v = ph.view;
+  const p = { x: v.x + (ev.clientX - rect.left) / rect.width * v.w, y: v.y + (ev.clientY - rect.top) / rect.height * v.h };
+  if (ph.stage === "full") { ph.stage = "zoom"; ph.cand = p; ph.view = zoomView(p); }
+  else { ph.cand = p; }
+  draw(); updateHint();
+});
+$("acceptPt").onclick = () => {
+  if (!(ph.stage === "zoom" && ph.cand)) return;
+  ph.pts.push(ph.cand); ph.cand = null; ph.stage = "full"; ph.view = fullView();
+  draw(); updateHint();
+  if (ph.pts.length === 4) finishPhoto();
+};
+$("undoPt").onclick = () => {
+  if (ph.stage === "zoom") { ph.cand = null; ph.stage = "full"; ph.view = fullView(); }
+  else if (ph.pts.length > 0) { ph.pts.pop(); state.pending = null; $("record").disabled = true; $("result").textContent = "Точка снята."; }
+  draw(); updateHint();
+};
+window.addEventListener("resize", () => { if (ph.img) draw(); });
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function finishPhoto() {
+  const refMm = Number($("refMm").value);
+  const dRef = dist2(ph.pts[0], ph.pts[1]);
+  const dTgt = dist2(ph.pts[2], ph.pts[3]);
+  if (!(refMm > 0) || !(dRef > 0)) { $("result").textContent = "Нужна длина эталона больше нуля и разные точки эталона."; return; }
+  const measuredMm = refMm * dTgt / dRef;
+  const ref = currentRef();
+  state.pending = {
+    method: "PHOTO_SCALE", referenceType: ref.id, measuredMm,
+    refMismatch: !ref.tape && Math.abs(refMm - ref.mm) > 0.5,
+    details: {
+      refMmUsed: refMm, refMmNominal: ref.mm, dRefPx: dRef, dTargetPx: dTgt, mmPerPx: refMm / dRef,
+      imageW: ph.W, imageH: ph.H, points: ph.pts.map((p) => ({ x: p.x, y: p.y })),
+    },
+  };
+  const pxErrPct = 100 * Math.SQRT2 / dRef;
+  let text = "Метод: фото-масштаб\nЭталон: " + ref.label + ", " + refMm + " мм\nЭталон в кадре: " + dRef.toFixed(1) + " px, объект: " + dTgt.toFixed(1) +
+    " px\nМасштаб: " + (refMm / dRef).toFixed(4) + " мм/px\nИЗМЕРЕНО: " + measuredMm.toFixed(1) + " мм\nВклад пикселей около ±" + pxErrPct.toFixed(2) + "%";
+  if (dRef < 150) text += "\nВНИМАНИЕ: эталон меньше 150 px в кадре, подойдите ближе или возьмите эталон крупнее.";
+  if (!ref.tape && Math.abs(refMm - ref.mm) > 0.5) text += "\nВНИМАНИЕ: выбран эталон «" + ref.label + "», а в поле длины " + refMm + " мм. Проверьте сторону листа или карты.";
+  $("result").textContent = text;
+  $("record").disabled = false;
+}
+
+/* ---------- AR mode ---------- */
+const ar = { session: null, points: [null, null], spread: [null, null], cams: [null, null], dists: [null, null], angles: [null, null], capture: null, lastHit: null, lastCam: null, lastNormal: null };
+const median = (a) => { const s = a.slice().sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+function medPoint(samples) { return [0, 1, 2].map((k) => median(samples.map((s) => s[k]))); }
+const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+function arDistanceMm() { return ar.points[0] && ar.points[1] ? d3(ar.points[0], ar.points[1]) * 1000 : null; }
+function arPointText(i) {
+  if (!ar.points[i]) return "—";
+  return "готова, до камеры " + (ar.dists[i] / 1000).toFixed(2) + " м, угол к поверхности " + ar.angles[i].toFixed(0) + "°";
+}
+function arText() {
+  const d = arDistanceMm();
+  let t = "Луч на поверхность: " + (ar.lastHit ? "есть" : "НЕТ, поводите телефоном")
+    + "\nТочка А: " + arPointText(0) + "\nТочка Б: " + arPointText(1);
+  if (ar.capture) t += "\nСнимаю точку " + (ar.capture.idx === 0 ? "А" : "Б") + ": " + ar.capture.samples.length + "/20" + (ar.lastHit ? ", не двигайтесь" : ", ЖДУ ЛУЧ: держите прицел на метке и медленно двигайте телефоном");
+  if (d !== null) t += "\nРасстояние: " + d.toFixed(0) + " мм";
+  $("arStatus").textContent = t;
+}
+function arReset() { ar.points = [null, null]; ar.spread = [null, null]; ar.cams = [null, null]; ar.dists = [null, null]; ar.angles = [null, null]; ar.capture = null; arText(); }
+function startCapture(idx) { ar.capture = { idx, samples: [], cams: [], normals: [] }; arText(); }
+$("arA").onclick = () => startCapture(0);
+$("arB").onclick = () => startCapture(1);
+$("arReset").onclick = arReset;
+$("arDone").onclick = () => { if (ar.session) ar.session.end().catch(() => {}); };
+$("arOverlay").addEventListener("beforexrselect", (e) => e.preventDefault());
+
+function onArFrame(_t, frame) {
+  const s = frame.session;
+  s.requestAnimationFrame(onArFrame);
+  const gl = ar.gl;
+  const layer = s.renderState.baseLayer;
+  if (gl && layer) { gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+  const results = frame.getHitTestResults(ar.hitSource);
+  ar.lastHit = null; ar.lastCam = null; ar.lastNormal = null;
+  if (results.length) {
+    const pose = results[0].getPose(ar.refSpace);
+    if (pose) {
+      const p = pose.transform.position; ar.lastHit = [p.x, p.y, p.z];
+      const q = pose.transform.orientation; // y axis of the hit pose = surface normal
+      ar.lastNormal = [2 * (q.x * q.y - q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z), 2 * (q.y * q.z + q.w * q.x)];
+    }
+  }
+  const vp = frame.getViewerPose(ar.refSpace);
+  if (vp) { const c = vp.transform.position; ar.lastCam = [c.x, c.y, c.z]; }
+  if (ar.capture && ar.lastHit) {
+    ar.capture.samples.push(ar.lastHit);
+    if (ar.lastCam) ar.capture.cams.push(ar.lastCam);
+    if (ar.lastNormal) ar.capture.normals.push(ar.lastNormal);
+    if (ar.capture.samples.length >= 20) {
+      const idx = ar.capture.idx;
+      const sm = ar.capture.samples;
+      const m = medPoint(sm);
+      ar.points[idx] = m;
+      ar.spread[idx] = Math.max(...sm.map((q) => d3(q, m))) * 1000;
+      if (ar.capture.cams.length && ar.capture.normals.length) {
+        const cam = medPoint(ar.capture.cams);
+        const n = medPoint(ar.capture.normals);
+        const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+        const dir = [m[0] - cam[0], m[1] - cam[1], m[2] - cam[2]];
+        const dl = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+        const sinElev = Math.min(1, Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]) / (dl * nl));
+        ar.cams[idx] = cam;
+        ar.dists[idx] = dl * 1000;
+        ar.angles[idx] = Math.asin(sinElev) * 180 / Math.PI;
+      } else { ar.cams[idx] = null; ar.dists[idx] = 0; ar.angles[idx] = 0; }
+      ar.capture = null;
+    }
+  }
+  arText();
+}
+$("arStart").onclick = async () => {
+  if (!navigator.xr) { $("result").textContent = "AR недоступен: navigator.xr отсутствует."; showArFail("no_start", "navigator.xr отсутствует"); return; }
+  const ov = $("arOverlay");
+  ov.style.display = "block";
+  try {
+    const session = await navigator.xr.requestSession("immersive-ar", {
+      requiredFeatures: ["hit-test"], optionalFeatures: ["dom-overlay"], domOverlay: { root: ov },
+    });
+    ar.session = session;
+    arReset();
+    const c = document.createElement("canvas");
+    ar.gl = c.getContext("webgl", { xrCompatible: true });
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, ar.gl) });
+    ar.refSpace = await session.requestReferenceSpace("local");
+    const viewer = await session.requestReferenceSpace("viewer");
+    ar.hitSource = await session.requestHitTestSource({ space: viewer });
+    session.addEventListener("end", onArEnd);
+    session.requestAnimationFrame(onArFrame);
+  } catch (e) {
+    ov.style.display = "none";
+    ar.session = null;
+    $("result").textContent = "AR не запустился: " + errText(e);
+    showArFail("no_start", errText(e));
+  }
+};
+function onArEnd() {
+  $("arOverlay").style.display = "none";
+  ar.session = null; ar.gl = null; ar.hitSource = null;
+  const d = arDistanceMm();
+  if (d === null) { $("result").textContent = "AR закрыт без двух точек. Если AR не сработал, запишите это ниже."; showArFail(ar.lastHit ? "unstable" : "no_ray", ""); return; }
+  $("arFailBox").hidden = true; state.arFail = null;
+  state.pending = {
+    method: "AR_HITTEST", referenceType: null, measuredMm: d,
+    details: { pointsM: ar.points, spreadMmA: ar.spread[0], spreadMmB: ar.spread[1], samplesPerPoint: 20, camerasM: ar.cams, cameraDistMm: ar.dists, surfaceAngleDeg: ar.angles },
+  };
+  $("result").textContent = "Метод: AR hit-test\nИЗМЕРЕНО: " + d.toFixed(1) + " мм\nРазброс снятия точек: А " + ar.spread[0].toFixed(1) + " мм, Б " + ar.spread[1].toFixed(1) + " мм\nДо камеры: А " + (ar.dists[0] / 1000).toFixed(2) + " м, Б " + (ar.dists[1] / 1000).toFixed(2) + " м\nУгол луча к поверхности: А " + ar.angles[0].toFixed(0) + "°, Б " + ar.angles[1].toFixed(0) + "° (90° = в упор, малый угол = скользящий)";
+  $("record").disabled = false;
+}
+
+function showArFail(reason, note) {
+  state.arFail = { note: note || "" };
+  $("arFailReason").value = reason;
+  $("arFailBox").hidden = false;
+}
+
+/* ---------- recording + summary ---------- */
+async function postTrial(t) {
+  if (!HAS_SERVER) return false;
+  try {
+    const r = await fetch("trial", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(t) });
+    return r.ok;
+  } catch (_) { return false; }
+}
+async function postPhoto(id, file) {
+  if (!HAS_SERVER) return false;
+  try {
+    const r = await fetch("photo?id=" + encodeURIComponent(id), { method: "POST", headers: { "content-type": file.type || "image/jpeg" }, body: file });
+    return r.ok;
+  } catch (_) { return false; }
+}
+// Reads and checks the shared context fields; returns {ctx} or {error}.
+function readContext() {
+  const place = $("place").value.trim();
+  if (!place) return { error: "Укажите место." };
+  const dist = $("distCm").value === "" ? null : Number($("distCm").value);
+  if (dist !== null && (!(dist > 0) || dist > 1000)) return { error: "Расстояние вводится в сантиметрах: 300 = 3 м. Значение " + $("distCm").value + " не подходит, проверьте." };
+  const tilt = $("tiltDeg").value === "" ? null : Number($("tiltDeg").value);
+  return { ctx: {
+    place, series: $("series").value, targetKind: $("targetKind").value, refPos: $("refPos").value || null, orientation: $("orient").value,
+    tiltDeg: tilt, distanceCm: dist, conditions: $("cond").value,
+  } };
+}
+// Shows a validation message and scrolls it into view (the status line sits below the record button).
+function warn(msg) {
+  $("sendStatus").textContent = "НЕ ЗАПИСАНО: " + msg;
+  try { $("sendStatus").scrollIntoView({ block: "center" }); } catch (_) {}
+}
+$("record").onclick = async () => {
+  const tape = Number($("tapeMm").value);
+  if (!state.pending || !(tape > 0)) { warn("введите длину по рулетке (больше нуля)."); return; }
+  const c = readContext();
+  if (c.error) { warn(c.error); return; }
+  const p = state.pending;
+  if (p.method === "PHOTO_SCALE" && !c.ctx.refPos) { warn("выберите «Положение эталона на измеряемой длине» в блоке «Условия попытки» выше."); return; }
+  const id = sessionId + "-" + (state.trials.length + 1);
+  const trial = Object.assign({
+    id, sessionId, page: PAGE_VERSION, at: new Date().toISOString(),
+    method: p.method, referenceType: p.referenceType, refMismatch: !!p.refMismatch,
+    tapeMm: tape, measuredMm: p.measuredMm,
+    errorMm: p.measuredMm - tape, errorPct: 100 * (p.measuredMm - tape) / tape,
+    failed: false, details: p.details, sent: false, photo: null, photoSent: null,
+  }, c.ctx);
+  if (p.method === "PHOTO_SCALE" && ph.file) { trial.photo = id; trial.photoSent = false; state.photos[id] = ph.file; idbPut(id, ph.file); }
+  state.trials.push(trial);
+  rememberPlace(c.ctx.place);
+  if (trial.photo) { trial.photoSent = await postPhoto(id, state.photos[id]); if (trial.photoSent) idbDel(id); }
+  trial.sent = await postTrial(trial);
+  saveLocal();
+  $("sendStatus").textContent = "Записано: ошибка " + trial.errorMm.toFixed(1) + " мм (" + trial.errorPct.toFixed(2) + "%). "
+    + (trial.sent ? (HAS_SERVER ? "Отправлено на компьютер." : "Сохранено на телефоне.") : SEND_HINT)
+    + (trial.photo ? (trial.photoSent ? " Снимок сохранён." : (HAS_SERVER ? " Снимок сохранён на телефоне, нажмите «Отправить неотправленные», когда будет связь с компьютером." : " Снимок сохранён на телефоне.")) : "");
+  state.pending = null; $("record").disabled = true; $("tapeMm").value = "";
+  if (state.mode === "photo") { resetPhotoPoints(); draw(); updateHint(); }
+  renderSummary();
+};
+$("recordArFail").onclick = async () => {
+  const c = readContext();
+  if (c.error) { $("sendStatus").textContent = c.error; return; }
+  const id = sessionId + "-" + (state.trials.length + 1);
+  const trial = Object.assign({
+    id, sessionId, page: PAGE_VERSION, at: new Date().toISOString(),
+    method: "AR_HITTEST", referenceType: null, refMismatch: false,
+    tapeMm: null, measuredMm: null, errorMm: null, errorPct: null,
+    failed: true, failReason: $("arFailReason").value, details: { note: state.arFail ? state.arFail.note : "" },
+    sent: false, photo: null, photoSent: null,
+  }, c.ctx, { refPos: null }); // AR has no reference, so refPos does not apply
+  state.trials.push(trial);
+  rememberPlace(c.ctx.place);
+  trial.sent = await postTrial(trial);
+  saveLocal();
+  $("sendStatus").textContent = "Записано: AR не сработал (" + trial.failReason + "). " + (trial.sent ? "Отправлено на компьютер." : SEND_HINT);
+  $("arFailBox").hidden = true; state.arFail = null;
+  renderSummary();
+};
+$("resend").onclick = async () => {
+  let ok = 0, fail = 0, pOk = 0, pFail = 0;
+  for (const t of state.trials) {
+    if (!t.sent) { if (await postTrial(t)) { t.sent = true; ok++; } else fail++; }
+    if (t.photo && !t.photoSent) {
+      const f = state.photos[t.id];
+      if (!f) pFail++;
+      else if (await postPhoto(t.id, f)) { t.photoSent = true; idbDel(t.id); pOk++; } else pFail++;
+    }
+  }
+  saveLocal(); renderSummary();
+  $("sendStatus").textContent = "Дослано проб: " + ok + ", не удалось: " + fail + ". Снимков дослано: " + pOk + ", не удалось: " + pFail + (pFail ? " (снимок не найден в памяти телефона)." : ".");
+};
+function renderSummary() {
+  if (!state.trials.length) { $("summary").textContent = "Пока нет попыток."; return; }
+  const groups = {};
+  const fails = {};
+  state.trials.forEach((t) => {
+    const POS = { middle: "посередине", left_end: "левый конец", right_end: "правый конец", other: "другое" };
+    const k = (t.series || "?") + " · " + t.method + " / " + (t.referenceType || "—") + (t.refPos ? " · эталон: " + POS[t.refPos] : "");
+    if (t.failed) { fails[k] = (fails[k] || 0) + 1; groups[k] = groups[k] || []; }
+    else (groups[k] = groups[k] || []).push(t.errorPct);
+  });
+  const lines = Object.keys(groups).map((k) => {
+    const a = groups[k]; const n = a.length;
+    const failTxt = fails[k] ? ", AR не сработал: " + fails[k] : "";
+    if (!n) return k + "\n  успешных нет" + failTxt;
+    const mean = a.reduce((s, x) => s + x, 0) / n;
+    const sd = n > 1 ? Math.sqrt(a.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1)) : 0;
+    const mx = Math.max(...a.map(Math.abs));
+    return k + "\n  n=" + n + ", средняя ошибка " + mean.toFixed(2) + "%, разброс " + sd.toFixed(2) + "%, максимум " + mx.toFixed(2) + "%" + failTxt;
+  });
+  const unsent = state.trials.filter((t) => !t.sent).length;
+  const unsentPh = state.trials.filter((t) => t.photo && !t.photoSent).length;
+  $("summary").textContent = lines.join("\n") + "\nНеотправленных проб: " + unsent + ", неотправленных снимков: " + unsentPh;
+}
+
+/* ---------- R04-0.4: hosted (HTTPS) use without the PC server: export trials as files ---------- */
+const HAS_SERVER = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+const SEND_HINT = HAS_SERVER ? "НЕ отправлено, нажмите «Отправить неотправленные»." : "Пробы хранятся на телефоне; в конце нажмите «Поделиться пробами и снимками».";
+function exportPayload() { return JSON.stringify({ exportedAt: new Date().toISOString(), page: PAGE_VERSION, trials: state.trials }, null, 1); }
+function exportName() { return "cam-meas-r04-trials-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".json"; }
+function photoFile(id) { const b = state.photos[id]; if (!b) return null; const ext = (b.type || "").includes("png") ? "png" : (b.type || "").includes("webp") ? "webp" : "jpg"; return new File([b], id + "." + ext, { type: b.type || "image/jpeg" }); }
+$("exportJson").onclick = () => {
+  try {
+    const url = URL.createObjectURL(new Blob([exportPayload()], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = exportName(); document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    $("sendStatus").textContent = "Файл проб сохранён в «Загрузки» (" + state.trials.length + " проб). Снимки сохраняет кнопка «Поделиться пробами и снимками».";
+  } catch (e) { $("sendStatus").textContent = "Не удалось сохранить файл: " + (e && e.message ? e.message : e); }
+};
+$("exportShare").onclick = async () => {
+  try {
+    const files = [new File([exportPayload()], exportName(), { type: "application/json" })];
+    for (const t of state.trials) { if (t.photo) { const f = photoFile(t.id); if (f) files.push(f); } }
+    if (!(navigator.canShare && navigator.canShare({ files }))) { $("sendStatus").textContent = "Поделиться файлами в этом браузере нельзя. Нажмите «Скачать пробы (JSON)»."; return; }
+    await navigator.share({ files, title: "CAM-MEAS-R04 пробы", text: "Проб: " + state.trials.length + ", снимков: " + (files.length - 1) });
+    $("sendStatus").textContent = "Передано: проб " + state.trials.length + ", снимков " + (files.length - 1) + ".";
+  } catch (e) { $("sendStatus").textContent = (e && e.name === "AbortError") ? "Отправка отменена." : "Не удалось поделиться: " + (e && e.message ? e.message : e); }
+};
+if (!HAS_SERVER) $("resend").hidden = true;
+
+renderSummary();
+updateHint();
+idbAll().then((rows) => { for (const r of rows) if (r && r.id && r.blob && !state.photos[r.id]) state.photos[r.id] = r.blob; renderSummary(); });
+</script>
+</body>
+</html>
